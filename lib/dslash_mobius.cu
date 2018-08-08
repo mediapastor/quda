@@ -665,4 +665,94 @@ namespace quda {
     errorQuda("Domain wall dslash has not been built");
 #endif
   }
+  
+  void mdwf_dslash_cuda_partial_tc(cudaColorSpinorField *out, const cudaGaugeField &gauge,
+		      const cudaColorSpinorField *in, const int parity, const int dagger,
+		      const cudaColorSpinorField *x, const double &m_f, const double &k2,
+                      const double *b_5, const double *c_5, const double &m5,
+		      const int *commOverride, const int DS_type, TimeProfile &profile, int sp_idx_length, int R_[4], int_fastdiv Xs_[4],
+          void* gpu_m5inv, int_fastdiv Ms_)
+  {
+		static bool init = false;
+#ifdef GPU_DOMAIN_WALL_DIRAC
+    const_cast<cudaColorSpinorField*>(in)->createComms(1);
+
+//    if(DS_type == 9){
+//      cudaDeviceProp device_prop;
+//      cudaGetDeviceProperties( &device_prop, 0 );
+//      if(device_prop.major < 7 || in->Precision() != QUDA_HALF_PRECISION){
+//        errorQuda("Your are either NOT rich enough to buy a Volta or TOO rich to buy a Volta.\n");
+//      }
+//    }
+
+		if(!init){
+			set_shared_memory_on_volta((const void*)MDWFDslash4Dslash5invDslash4preH18Kernel<INTERIOR_KERNEL>, 
+				"MDWFDslash4Dslash5invDslash4preH18Kernel<INTERIOR_KERNEL>");
+			set_shared_memory_on_volta((const void*)MDWFDslash4Dslash5invXpayDslash5invDaggerH18XpayKernel<INTERIOR_KERNEL>, 
+				"MDWFDslash4Dslash5invXpayDslash5invDaggerH18XpayKernel<INTERIOR_KERNEL>");
+			set_shared_memory_on_volta((const void*)MDWFDslash4DaggerDslash4preDaggerDslash5invDaggerH18Kernel<INTERIOR_KERNEL>, 
+				"MDWFDslash4DaggerDslash4preDaggerDslash5invDaggerH18Kernel<INTERIOR_KERNEL>");
+      set_shared_memory_on_volta((const void*)MDWFDslash5invSmTcH18DaggerKernel<INTERIOR_KERNEL>, 
+				"MDWFDslash5invSmTcH18DaggerKernel<INTERIOR_KERNEL>");
+			set_shared_memory_on_volta((const void*)MDWFDslash4DaggerDslash4preDaggerXpayH18XpayKernel<INTERIOR_KERNEL>, 
+				"MDWFDslash4DaggerDslash4preDaggerXpayH18XpayKernel<INTERIOR_KERNEL>");
+			init = true;
+		}
+
+    DslashCuda *dslash = nullptr;
+    if (in->Precision() == QUDA_DOUBLE_PRECISION) {
+      dslash = new MDWFDslashPCCuda<double2,double2>(out, gauge, in, x, m_f, k2, b_5, c_5, m5, parity, dagger, commOverride, DS_type);
+    } else if (in->Precision() == QUDA_SINGLE_PRECISION) {
+      dslash = new MDWFDslashPCCuda<float4,float4>(out, gauge, in, x, m_f, k2, b_5, c_5, m5, parity, dagger, commOverride, DS_type);
+    } else if (in->Precision() == QUDA_HALF_PRECISION) {
+      dslash = new MDWFDslashPCCuda<short4,short4>(out, gauge, in, x, m_f, k2, b_5, c_5, m5, parity, dagger, commOverride, DS_type);
+    }
+
+    dslash->dslashParam.m5inv = gpu_m5inv;
+    dslash->dslashParam.Ms = Ms_;
+
+    dslash->dslashParam.partial_length = sp_idx_length;
+    dslash->dslashParam.R[0] = R_[0];
+    dslash->dslashParam.R[1] = R_[1];
+    dslash->dslashParam.R[2] = R_[2];
+    dslash->dslashParam.R[3] = R_[3];
+
+    dslash->dslashParam.Xs[0] = Xs_[0];
+    dslash->dslashParam.Xs[1] = Xs_[1];
+    dslash->dslashParam.Xs[2] = Xs_[2];
+    dslash->dslashParam.Xs[3] = Xs_[3];
+
+//    printfQuda("volume: %dx%dx%dx%d; R: %dx%dx%dx%d; partial_length=%d.\n", 
+//                                                               int(dslash->dslashParam.Xs[0]),
+//                                                               int(dslash->dslashParam.Xs[1]),
+//                                                               int(dslash->dslashParam.Xs[2]),
+//                                                               int(dslash->dslashParam.Xs[3]), 
+//                                                               int(dslash->dslashParam.R[0]), 
+//                                                               int(dslash->dslashParam.R[1]), 
+//                                                               int(dslash->dslashParam.R[2]), 
+//                                                               int(dslash->dslashParam.R[3]), 
+//                                                               sp_idx_length);
+    
+    // the parameters passed to dslashCuda must be 4-d volume and 3-d
+    // faces because Ls is added as the y-dimension in thread space
+    int ghostFace[QUDA_MAX_DIM];
+    for (int i=0; i<4; i++) ghostFace[i] = in->GhostFace()[i] / in->X(4);
+
+    DslashPolicyImp* dslashImp = nullptr;
+    if (DS_type != 0) {
+      dslashImp = DslashFactory::create(QudaDslashPolicy::QUDA_DSLASH_NC);
+      (*dslashImp)(*dslash, const_cast<cudaColorSpinorField*>(in), sp_idx_length, ghostFace, profile);
+      delete dslashImp;
+    } else {
+      DslashPolicyTune dslash_policy(*dslash, const_cast<cudaColorSpinorField*>(in), sp_idx_length, ghostFace, profile);
+      dslash_policy.apply(0);
+    }
+    // sp_idx_length is the param.threads
+
+    delete dslash;
+#else
+    errorQuda("Domain wall dslash has not been built");
+#endif
+  }
+
 }

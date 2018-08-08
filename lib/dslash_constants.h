@@ -137,6 +137,9 @@ enum KernelType {
 
     bool expanding = false;
     int Rz[4] = {0,0,0,0};
+  
+    void* m5inv = NULL;
+    int_fastdiv Ms;
 
 #ifdef USE_TEXTURE_OBJECTS
     cudaTextureObject_t inTex;

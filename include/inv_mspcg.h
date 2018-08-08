@@ -9,6 +9,8 @@
 
 #include <invert_quda.h>
 
+#include <cublas_v2.h>
+
 namespace quda {
 
   class MSPCG : public Solver { // Multisplitting Preconditioned CG
@@ -69,6 +71,10 @@ namespace quda {
       int sp_len2, sp_len1, sp_len0;
       int RR2[4], RR1[4], RR0[4];
       int_fastdiv Xs2[4], Xs1[4], Xs0[4];
+
+      half* cpu_m5inv;
+      half* gpu_m5inv;
+      int_fastdiv Ms;
 
     public:
 

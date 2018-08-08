@@ -142,48 +142,16 @@ sm_b[ (coord[4]*4+3)*(N_sm)+threadIdx.x*6+3 ] = i31_im*scale;
 sm_b[ (coord[4]*4+3)*(N_sm)+threadIdx.x*6+4 ] = i32_re*scale;
 sm_b[ (coord[4]*4+3)*(N_sm)+threadIdx.x*6+5 ] = i32_im*scale;
 
-// Construct matrix A: TODO: should be careful about the idle threads.
+}
 
-// threadIdx.x should not be idle(?).
-// With Ls=12 and blockDim.x=32 the following gives a 2-way bank conflict.  
-  if(threadIdx.x < param.dc.Ls){
-
-#ifdef MDWF_mode   // Check whether MDWF option is enabled
-    half kappa = -(static_cast<half>(mdwf_c5[ threadIdx.x ])*(static_cast<half>(4.0) + static_cast<half>(m5)) - static_cast<half>(1.0))/(static_cast<half>(mdwf_b5[ threadIdx.x ])*(static_cast<half>(4.0) + static_cast<half>(m5)) + static_cast<half>(1.0));
-#else
-    half kappa = static_cast<half>(2.0)*static_cast<half>(a);
-#endif  // select MDWF mode
-  
-    half inv_d_n = static_cast<half>(0.5) / ( static_cast<half>(1.0) + static_cast<half>(POW(kappa,param.dc.Ls))*static_cast<half>(mferm) );
-    half factorR;
-    half factorL;
-  
-    int exponent = threadIdx.x  > coord[4] ? param.dc.Ls-threadIdx.x+coord[4] : coord[4]-threadIdx.x;
-    factorR = inv_d_n * static_cast<half>(POW(kappa,exponent))  * ( threadIdx.x > coord[4] ? static_cast<half>(-mferm) : static_cast<half>(1.0) );
-    int exponent2 = threadIdx.x < coord[4] ? param.dc.Ls-coord[4]+threadIdx.x : threadIdx.x-coord[4];
-    factorL = inv_d_n * static_cast<half>(POW(kappa,exponent2)) * ( threadIdx.x < coord[4] ? static_cast<half>(-mferm) : static_cast<half>(1.0) );
-    // (mu, s) by (nu, t). column-major. t := threadIdx.y
-  
-    sm_a[ (coord[4]*4+0)*(M_sm)+(threadIdx.x*4+0) ] = factorR + factorL;
-    sm_a[ (coord[4]*4+0)*(M_sm)+(threadIdx.x*4+1) ] = static_cast<half>(0.0f);
-    sm_a[ (coord[4]*4+0)*(M_sm)+(threadIdx.x*4+2) ] = factorR - factorL;
-    sm_a[ (coord[4]*4+0)*(M_sm)+(threadIdx.x*4+3) ] = static_cast<half>(0.0f);
-    
-    sm_a[ (coord[4]*4+1)*(M_sm)+(threadIdx.x*4+0) ] = static_cast<half>(0.0f);
-    sm_a[ (coord[4]*4+1)*(M_sm)+(threadIdx.x*4+1) ] = factorR + factorL;
-    sm_a[ (coord[4]*4+1)*(M_sm)+(threadIdx.x*4+2) ] = static_cast<half>(0.0f);
-    sm_a[ (coord[4]*4+1)*(M_sm)+(threadIdx.x*4+3) ] = factorR - factorL;
-    
-    sm_a[ (coord[4]*4+2)*(M_sm)+(threadIdx.x*4+0) ] = factorR - factorL;
-    sm_a[ (coord[4]*4+2)*(M_sm)+(threadIdx.x*4+1) ] = static_cast<half>(0.0f);
-    sm_a[ (coord[4]*4+2)*(M_sm)+(threadIdx.x*4+2) ] = factorR + factorL;
-    sm_a[ (coord[4]*4+2)*(M_sm)+(threadIdx.x*4+3) ] = static_cast<half>(0.0f);
-    
-    sm_a[ (coord[4]*4+3)*(M_sm)+(threadIdx.x*4+0) ] = static_cast<half>(0.0f);
-    sm_a[ (coord[4]*4+3)*(M_sm)+(threadIdx.x*4+1) ] = factorR - factorL;
-    sm_a[ (coord[4]*4+3)*(M_sm)+(threadIdx.x*4+2) ] = static_cast<half>(0.0f);
-    sm_a[ (coord[4]*4+3)*(M_sm)+(threadIdx.x*4+3) ] = factorR + factorL;  
-  }
+half* ptr = (half*)param.m5inv;
+const auto Ms = param.Ms;
+int nn, mm;
+// Construct matrix A
+for(int offset = threadIdx.y*blockDim.x+threadIdx.x; offset < (M*K>>1); offset += blockDim.x*blockDim.y){
+  nn = offset*2/Ms;
+  mm = offset*2-nn*Ms;
+  memcpy( sm_a+nn*M_sm+mm, ptr+offset*2, 4 );
 }
 
 __syncthreads();

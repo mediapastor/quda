@@ -104,6 +104,41 @@ namespace quda {
     inner.preserve_source = QUDA_PRESERVE_SOURCE_NO;
   }
 */
+  void calculate_m5inv(half* ptr, int Ls, double* b5, double* c5, double m5, double mf){
+    for(int t = 0; t < Ls; t++){
+    for(int s = 0; s < Ls; s++){
+      double kappa = -(c5[s]*(4.+m5)-1.) / (b5[s]*(4.+m5)+1.);
+      double inv_d_n = 0.5 / (1.+pow(kappa,Ls)*mf);
+
+      int exponent =  s>t ? Ls-s+t : t-s;
+      double factorR = inv_d_n * pow(kappa,exponent) *  (s>t ? -mf : 1.);
+      int exponent2 = s<t ? Ls-t+s : s-t;
+      double factorL = inv_d_n * pow(kappa,exponent2) * (s<t ? -mf : 1.);
+      // (mu, s) by (nu, t). column-major. t := threadIdx.y
+
+      ptr[ (t*4+0)*(Ls*4)+(s*4+0) ] = factorR + factorL;
+      ptr[ (t*4+0)*(Ls*4)+(s*4+1) ] = 0.;
+      ptr[ (t*4+0)*(Ls*4)+(s*4+2) ] = factorR - factorL;
+      ptr[ (t*4+0)*(Ls*4)+(s*4+3) ] = 0.;
+
+      ptr[ (t*4+1)*(Ls*4)+(s*4+0) ] = 0.;
+      ptr[ (t*4+1)*(Ls*4)+(s*4+1) ] = factorR + factorL;
+      ptr[ (t*4+1)*(Ls*4)+(s*4+2) ] = 0.;
+      ptr[ (t*4+1)*(Ls*4)+(s*4+3) ] = factorR - factorL;
+
+      ptr[ (t*4+2)*(Ls*4)+(s*4+0) ] = factorR - factorL;
+      ptr[ (t*4+2)*(Ls*4)+(s*4+1) ] = 0.;
+      ptr[ (t*4+2)*(Ls*4)+(s*4+2) ] = factorR + factorL;
+      ptr[ (t*4+2)*(Ls*4)+(s*4+3) ] = 0.;
+
+      ptr[ (t*4+3)*(Ls*4)+(s*4+0) ] = 0.;
+      ptr[ (t*4+3)*(Ls*4)+(s*4+1) ] = factorR - factorL;
+      ptr[ (t*4+3)*(Ls*4)+(s*4+2) ] = 0.;
+      ptr[ (t*4+3)*(Ls*4)+(s*4+3) ] = factorR + factorL; 
+    }}
+  
+  }
+
   MSPCG::MSPCG(QudaInvertParam* inv_param, SolverParam& _param, TimeProfile& profile, int ic) :
     Solver(_param, profile), solver_prec(0), solver_prec_param(_param), 
     mat(NULL),  mat_sloppy(NULL), mat_precondition(NULL),
@@ -169,6 +204,18 @@ namespace quda {
     mat_precondition = new DiracMobiusPC(dirac_param_precondition);
     nrm_op_precondition = new DiracMdagM(mat_precondition);
 
+// initialize the m5inv for tensor core.
+    size_t m5inv_size = dirac_param_precondition.Ls*dirac_param_precondition.Ls*16;
+    cudaMalloc((void**)&gpu_m5inv, m5inv_size*sizeof(half));
+    cpu_m5inv = new half[m5inv_size]; 
+    calculate_m5inv(cpu_m5inv,  dirac_param_precondition.Ls, 
+                                dirac_param_precondition.b_5, 
+                                dirac_param_precondition.c_5,
+                                dirac_param_precondition.m5,
+                                dirac_param_precondition.mass);
+    cudaMemcpy(gpu_m5inv, cpu_m5inv, m5inv_size*sizeof(half), cudaMemcpyHostToDevice);
+    Ms = dirac_param_precondition.Ls*4;
+
 //    fillInnerSolverParam(solver_prec_param, param);
 
     printfQuda("MSPCG constructor ends.\n");
@@ -205,6 +252,9 @@ namespace quda {
 
     delete padded_gauge_field;
     delete padded_gauge_field_precondition;
+
+    delete [] cpu_m5inv;
+    cudaFree(gpu_m5inv);
 
     profile.TPSTOP(QUDA_PROFILE_FREE);
   }
@@ -315,7 +365,7 @@ namespace quda {
     printfQuda("%% diff      x2 = %16.12e (This number is SUPPOSED to be tiny).\n", dd);
     
     mat_precondition->Dagger(QUDA_DAG_YES);
-    mat_precondition->dslash5inv_sm_tc_partial(*fx, *fb, static_cast<QudaParity>(0), sp_len2, RR2, Xs2);
+    mat_precondition->dslash5inv_sm_tc_partial(*fx, *fb, static_cast<QudaParity>(0), sp_len2, RR2, Xs2, gpu_m5inv, Ms);
     mat_precondition->dslash5inv_sm_partial(*ft, *fb, static_cast<QudaParity>(0), sp_len2, RR2, Xs2);
     mat_precondition->Dagger(QUDA_DAG_NO);
 
@@ -370,7 +420,7 @@ namespace quda {
 //    mat_precondition->Dslash5inv(*iftmp, *ifset, parity[1]);                  // +2
 //    mat_precondition->Dslash5inv(out, *iftmp, parity[1]);                  // +2
 //    mat_precondition->dslash5inv_sm_partial(out, *iftmp, parity[1], sp_len2, RR2, Xs2);                  // +2
-    mat_precondition->dslash5inv_sm_tc_partial(out, *iftmp, parity[1], sp_len2, RR2, Xs2);                  // +2
+    mat_precondition->dslash5inv_sm_tc_partial(out, *iftmp, parity[1], sp_len2, RR2, Xs2, gpu_m5inv, Ms);                  // +2
     
     mat_precondition->Dagger(QUDA_DAG_NO);
     mat_precondition->dslash4_dagger_dslash4pre_dagger_dslash5inv_dagger_partial(*ifset, out, parity[0], sp_len1, RR1, Xs1);

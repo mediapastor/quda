@@ -82,6 +82,13 @@ namespace quda {
       const int *commOverride, const int DS_type, TimeProfile &profile, int sp_idx_length, int R_[4], int_fastdiv Xs_[4],
       bool expanding_=false, std::array<int,4> Rz_={0,0,0,0});
 
+  void mdwf_dslash_cuda_partial_tc(cudaColorSpinorField *out, const cudaGaugeField &gauge,
+      const cudaColorSpinorField *in, const int parity, const int dagger,
+      const cudaColorSpinorField *x, const double &m_f, const double &k2,
+                  const double *b_5, const double *c_5, const double &m5,
+      const int *commOverride, const int DS_type, TimeProfile &profile, int sp_idx_length, int R_[4], int_fastdiv Xs_[4],
+      void* gpu_m5inv, int_fastdiv Ms_);
+
   // staggered Dslash    
   void staggeredDslashCuda(cudaColorSpinorField *out, const cudaGaugeField &gauge,
 			   const cudaColorSpinorField *in, const int parity, const int dagger,
